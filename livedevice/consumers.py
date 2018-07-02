@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import random
+import datetime
 
 import googlemaps
 import requests
@@ -47,6 +48,59 @@ def ws_disconnect(message):
     Group("livedevice").discard(message.reply_channel)
 
 
+def comtech_locate(data, board_id):
+    loc = {'lat': 0, 'lon': 0, 'accuracy': 0}
+
+    # Add the necessary header information
+    headers = {'x-api-key': settings.COMTECH_ILP_API_KEY,
+        'content-': 'application/j',
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache'
+    }
+
+    # Setup the payload and add the location data
+    payload = {"typeShape": 31,
+        "devid": board_id,
+        "etid" : 'Workplace Environment Monitor',
+        "observations":
+            {"observations" : [] }
+    }
+    for device in data:
+        # ComTech API requires signal strength (rssi)
+        if not 'signalStrength' in device:
+            continue
+        # Payload requires datetime in UTC ISO 8601 format
+        payload['observations']['observations'].append(
+            {
+                'epoch': datetime.datetime.utcnow().isoformat() + 'Z',
+                'type': 14,
+                'rss': device['signalStrength'],
+                'mac': [octet for octet in binascii.unhexlify(device['mac'].replace(':',''))]
+            })
+
+    # Make a request
+    req = requests.request("POST", settings.COMTECH_ILP_URL, headers=headers, data=payload)
+    if req.status == 200:
+        return loc
+
+    content = json.loads(req.content)
+    # Build out the location information
+    # Apparently the API can return more than one estimate, but for now we just take the first one
+    loc['lat'] = content['estimates'][0]['shape']['lat']
+    loc['lon'] = content['estimates'][0]['shape']['lon']
+    loc['accuracy'] = content['estimates'][0]['shape']['radius']
+
+    return loc
+
+def google_locate(data):
+    client = googlemaps.Client(key=settings.GOOGLE_MAPS_API_KEY)
+
+    # The value field contains the list of APs and any extra data to make
+    # the geolocation request
+    req = geolocate(client, wifi_access_points=json.loads(data))
+
+    return req
+
 def gis_locate(data):
     """
     Use data (value) in the message to perform geolocation.
@@ -67,7 +121,6 @@ def gis_locate(data):
         return
     session = account.get_session()
     message = data['message']
-    client = googlemaps.Client(key=settings.GOOGLE_MAPS_API_KEY)
 
     # Pull out the content and message to send
     content = message
@@ -77,7 +130,10 @@ def gis_locate(data):
 
     # The value field contains the list of APs and any extra data to make
     # the geolocation request
-    req = geolocate(client, wifi_access_points=json.loads(value))
+    if settings.LOCATION_ENGINE == 'ComTech':
+        loc = comtech_locate(value, board_id)
+    else:
+        loc = google_locate(value)
 
     # NOTE: This should be all or nothing but there is possibly a problem here.
     # If the first resource update for latitude succeeds but longitude fails then
@@ -86,23 +142,23 @@ def gis_locate(data):
     session.set_endpoint_resource(
             endpoint_id=board_id,
             resource_path='/3336/1/5514',
-            payload=req['location']['lat']
+            payload=loc['location']['lat']
         )
     session.set_endpoint_resource(
             endpoint_id=board_id,
             resource_path='/3336/1/5515',
-            payload=req['location']['lng']
+            payload=loc['location']['lng']
         )
     session.set_endpoint_resource(
             endpoint_id=board_id,
             resource_path='/3336/1/5516',
-            payload=req['accuracy']
+            payload=loc['accuracy']
         )
 
     # store our values
-    Sensor.objects.set(webhook_auth, update['board'], '/3336/1/5514', req['location']['lat'])
-    Sensor.objects.set(webhook_auth, update['board'], '/3336/1/5515', req['location']['lng'])
-    Sensor.objects.set(webhook_auth, update['board'], '/3336/1/5516', req['accuracy'])
+    Sensor.objects.set(webhook_auth, update['board'], '/3336/1/5514', loc['location']['lat'])
+    Sensor.objects.set(webhook_auth, update['board'], '/3336/1/5515', loc['location']['lng'])
+    Sensor.objects.set(webhook_auth, update['board'], '/3336/1/5516', loc['accuracy'])
 
 
 def mbedcloudaccount_connect(data):

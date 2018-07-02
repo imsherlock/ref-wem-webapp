@@ -233,8 +233,15 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Google Maps API Key
-GOOGLE_MAPS_API_KEY = get_env_variable("GOOGLE_MAPS_API_KEY")
+# Setup location engine info
+LOCATION_ENGINE = 'ComTech'
+if LOCATION_ENGINE == 'ComTech':
+    # COMTECH Indoor Location API Key
+    COMTECH_ILP_API_KEY = get_env_variable("COMTECH_ILP_API_KEY")
+    COMTECH_ILP_URL = "https://test-locstudio.adev-ent.services/ilp/v1.2/positioning/calculate"
+else:
+    # Google Maps API Key
+    GOOGLE_MAPS_API_KEY = get_env_variable("GOOGLE_MAPS_API_KEY")
 
 MBED_CLOUD_PRESUBSCRIPTIONS = [
         {"resource-path": ["/3301/0/*"]},
